@@ -1,0 +1,193 @@
+---
+title: "Natural Language Processing Methods are Sensitive to Sub-Clinical Linguistic Differences in Schizophrenia Spectrum Disorders"
+author: "Sunny X. Tang, Reno Kriz, Sunghye Cho, Suh Jung Park, Jenna Harowitz, Raquel E. Gur, Mahendra T. Bhati, Daniel H. Wolf, João Sedoc, Mark Y. Liberman"
+date: "1/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+load("datshort.R")
+load("datlong.R")
+load("justBERTdif.R")
+
+library(effsize)
+library(nlme)
+library(ggplot2)
+library(Hmisc)
+library(plyr)
+library(arsenal)
+library(lme4)
+library(dplyr)
+```
+
+## Summary
+- Purpose: this code summarizes basic sample statistics and investigates group effect on BERT next sentence prediction as well as divergence from interviewer prompt.
+
+## Data Source
+- Cohort 1 "Worden" - includes control, schizophrenia and schizoaffective disorder
+- Cohort 2 "Wolf Pilot" - includes control and schizophrenia participants; combines data from both positive and neutral stimuli
+- Final analysis: DID NOT DROP any length sentences. Previous analyses examined the effect of excluding short sentences with fewer than 2 or fewer than 5 words with the thought that longer sentences would be more illustrative of differences in coherence. This did not produce a difference in the results, so these were not included in the final analysis shown here.
+- BERT Sentence pairs include both participant-participant and interviewer-participant pairs
+- TLC ratings (missing for n=3 due to recording not available)
+- Withing subject normalized weighted scores were calculated: weightedbert = (l1b1 + l2b2 + l3b3 + ... )/(l1 + l2 + l3 + ...), but were not reported in the manuscript because this did not affect the results.
+
+## Calculation of summary variables 
+```{r, include=FALSE}
+######## Calculating mean BERT scores by subject ##########
+justsubjectbert <- cbind(rep(0,31), rep(0,31), rep(0,31), rep(0,31), rep(0,31)) %>% as.data.frame()
+colnames(justsubjectbert) <- c("bblid", "meanbert", "numbersentences", "meansentlength", "meanweightbert")
+
+for (i in 1:31) {
+      temp1 <- filter(datlong, bblid==datshort$bblid[i])
+      temp1$bblid <- as.character(temp1$bblid)
+      justsubjectbert[i,1] <- temp1[i,1]
+      justsubjectbert[i,2] <- sum(temp1$bert)/dim(temp1)[1]
+      justsubjectbert[i,3] <- dim(temp1)[1]
+      justsubjectbert[i,4] <- sum(temp1$s2length)/dim(temp1)[1]
+      justsubjectbert[i,5] <- sum(temp1$weightbert)/sum(temp1$s2length)
+}
+
+datshort <- merge(datshort, justsubjectbert, by="bblid")
+
+
+#########Total words + word density #########
+justwordcount <- cbind(rep(0,31), rep(0,31), rep(0,31), rep(0,31)) %>% as.data.frame()
+colnames(justwordcount) <- c("bblid", "numbersentencesall", "meansentlengthall", "wordcount")
+
+for (i in 1:31) {
+      temp1 <- filter(datlong, bblid==datshort$bblid[i])
+      temp1$bblid <- as.character(temp1$bblid)
+      justwordcount[i,1] <- temp1[i,1]
+      justwordcount[i,2] <- dim(temp1)[1]
+      justwordcount[i,3] <- sum(temp1$s2length)/dim(temp1)[1]
+      justwordcount[i,4] <- sum(temp1$s2length)
+}
+
+datshort <- merge(datshort, justwordcount, by="bblid")
+datshort$worddensity = datshort$wordcount / datshort$recording_duration_sec
+
+##Checking for outliers in the TLC-sum score
+boxplot(datshort$tlcsum)$out
+datshort[datshort$tlcsum>=15,c(1,70)]
+```
+
+
+## Sample Description
+```{r, results="asis"}
+tableby(group ~ study + age + sex + race + edu, data = datshort) %>% summary(digits=2, digits.pct=0, digits.p=3)
+```
+```{r, echo=TRUE}
+###Effect sizes for continuous variables
+#Age
+cohen.d(datshort$age ~ datshort$group)
+#Edu
+cohen.d(datshort$edu ~ datshort$group)
+
+###Race by group test
+fisher.test(datshort$race, datshort$group)
+```
+
+## Comparing Cohort 1 vs. Cohort 2
+```{r, results="asis"}
+tableby(study ~ group + age + sex + race + edu + recording_duration_sec + numbersentencesall + 
+              meansentlengthall + wordcount + worddensity, data = datshort) %>% summary(digits=2, digits.pct=0, digits.p=3)
+```
+```{r}
+cohen.d(datshort$recording_duration_sec ~ datshort$study)
+```
+
+## Bert + basic language characteristics by subject btw groups
+```{r, results="asis"}
+tableby(group ~  meanbert + meanweightbert + recording_duration_sec + numbersentencesall + 
+              meansentlengthall + wordcount + worddensity, data = datshort) %>% summary(digits=2, digits.pct=0, digits.p=3)
+```
+
+### Normality of language measures
+- Only mean bert is normal - all others are NOT normally distributed
+```{r, echo=TRUE}
+shapiro.test(datshort$meanbert)
+shapiro.test(datshort$meanweightbert)
+
+shapiro.test(datshort$tlcglobal)
+shapiro.test(datshort$tlcsum)
+```
+
+### Unweighted BERT
+```{r}
+lm(meanbert ~ group + study + edu, data = datshort) %>% summary
+lm(meanbert ~ group + sex + age + study + race + edu, data = datshort) %>% summary
+cohen.d(datshort$meanbert ~ datshort$group)
+```
+
+### Weighted within subject
+```{r}
+lm(meanweightbert ~ edu, data = datshort) %>% summary
+
+lm(meanweightbert ~ group + study, data = datshort) %>% summary
+lm(meanweightbert ~ group + study + edu, data = datshort) %>% summary
+lm(meanweightbert ~ group + sex + age + study + race + edu, data = datshort) %>% summary
+cohen.d(datshort$meanweightbert ~ datshort$group)
+```
+
+### Effect size calculations (itemwise for supplemental table)
+```{r, echo=TRUE}
+for (i in 50:73) {
+      print(colnames(datshort)[i])
+      cohen.d(datshort[,i] ~ datshort$group) %>% print
+      print("----")
+}
+```
+
+## Calculating slopes for BERT embedding distance by group
+```{r}
+justBERTdif_SSD <- filter(justBERTdif, Group=="SCZ")
+lm(Embedding_Difference ~ Distance_from_Prompt, data=justBERTdif_SSD) %>% confint()
+
+justBERTdif_HC <- filter(justBERTdif, Group=="HC")
+lm(Embedding_Difference ~ Distance_from_Prompt, data=justBERTdif_HC) %>% confint()
+
+```
+
+## Plotting
+- summaries of median and interquartile range
+```{r}
+ggplot(datshort, aes(group, tlcglobal)) + 
+      geom_dotplot(aes(fill=group, color=group), binaxis = "y", stackdir="center", alpha=0.4, dotsize=1) +
+      stat_summary(fun.y = median, geom="point", aes(color=group), pch=15, size=5) +
+      stat_summary(fun.data =median_hilow, mult=1, 
+                   geom="errorbar", width=0.2, aes(color=group), lwd=1) +
+      theme_bw(base_family = "Times", base_size = 22) +
+      scale_color_manual(values=c("lightsteelblue3", "slateblue4"), labels=c("HC", "SSD")) +
+      scale_fill_manual(values=c("lightsteelblue3", "slateblue4")) +
+      labs(x=NULL, y="TLC Global Score") +
+      theme(legend.title = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      coord_cartesian(ylim = c(-0.51,3.51))
+
+ggplot(datshort, aes(group, tlcsum)) + 
+      geom_dotplot(aes(fill=group, color=group), binaxis = "y", stackdir="center", alpha=0.4, dotsize=1) +
+      stat_summary(fun.y = median, geom="point", aes(color=group), pch=15, size=5) +
+      stat_summary(fun.data = median_hilow, mult=1, 
+                   geom="errorbar", width=0.2, aes(color=group), lwd=1) +
+      theme_bw(base_family = "Times", base_size = 22) +
+      scale_color_manual(values=c("darkolivegreen2", "chartreuse4"), labels=c("HC", "SSD")) +
+      scale_fill_manual(values=c("darkolivegreen2", "chartreuse4")) +
+      labs(x=NULL, y="TLC Total Score") +
+      theme(legend.title = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      coord_cartesian(ylim = c(-4.6,40.6))
+
+ggplot(datshort, aes(group, meanweightbert)) + 
+      geom_dotplot(aes(fill=group, color=group), binaxis = "y", stackdir="center", alpha=0.4, dotsize=1.5) +
+      stat_summary(fun.y = median, geom="point", aes(color=group), pch=15, size=5) +
+      stat_summary(fun.data = median_hilow, mult=1, 
+                   geom="errorbar", width=0.2, aes(color=group), lwd=1) +
+      theme_bw(base_family = "Times", base_size = 22) +
+      scale_color_manual(values=c("thistle3", "purple4"), labels=c("HC", "SSD")) +
+      scale_fill_manual(values=c("thistle3", "purple4")) +
+      labs(x=NULL, y="BERT Coherence Score") +
+      theme(legend.title = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      coord_cartesian(ylim = c(.83,1.02))
+
+```
+
